@@ -3,23 +3,57 @@
   <head>
     <title>Hello Agent</title>
   </head>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+    }
+    select,
+    input,
+    button {
+      font-size: 16px;
+      padding: 8px;
+      margin-right: 10px;
+    }
+    pre {
+      background-color: #f7f7f7;
+      padding: 12px;
+      border-radius: 5px;
+      white-space: pre-wrap;
+      max-height: 400px;
+      overflow-y: auto;
+    }
+  </style>
   <body>
     <h1>Gemini Agent 👋</h1>
     <select id="persona">
+      <option value="">Auto Route</option>
       <option value="tutor">Tutor</option>
       <option value="travel">Travel Assistant</option>
       <option value="support">Customer Support</option>
     </select>
 
-    <input type="text" id="input" placeholder="Say hello..." />
+    <br />
+    <br />
+
+    <input type="text" id="input" placeholder="Say hello..." size="50" />
     <button onclick="send()">Send</button>
+
+    <h3>Conversation</h3>
     <pre id="output"></pre>
 
     <script>
       const sessionId = "default"; // or just use 'default' if testing
+      const outputE1 = document.getElementById("output");
 
       async function send() {
-        const msg = document.getElementById("input").value;
+        const inputE1 = document.getElementById("input");
+        const msg = inputE1.value.trim();
+        if (!msg) return;
+
+        const persona = document.getElementById("persona").value;
+
+        outputE1.innerText += `\n You: ${msg}`;
 
         const res = await fetch("/chat", {
           method: "POST",
@@ -27,12 +61,18 @@
           body: JSON.stringify({
             message: msg,
             sessionId: sessionId,
-            persona: document.getElementById("persona")?.value || "tutor",
+            persona: persona,
           }),
         });
 
         const data = await res.json();
-        document.getElementById("output").innerText += "\n\nAI: " + data.reply;
+        const reply = data.reply || "No reply";
+        const usedPersona = data.routedTo || persona;
+
+        outputE1.innerText += `\n (${usedPersona}) AI: ${reply}\n`;
+
+        inputE1.value = "";
+        outputE1.scrollTop = outputE1.scrollHeight;
       }
     </script>
   </body>

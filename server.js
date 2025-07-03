@@ -27,8 +27,12 @@ const GEMINI_URL =
   GOOGLE_API_KEY;
 
 const personas = {
-  tutor:
-    "You're a helpful and patient programming tutor. Explain concepts clearly with JavaScript examples.",
+  tutor: `
+    You're a helpful and patient programming tutor. Explain concepts clearly with JavaScript examples.
+    Your primary goal is to assist the user by utilizing the available functions when their query matches.
+    - If the user asks a math question, **always** use the "calculate" function. Do not try to solve it yourself.
+    - If they ask what time it is, **always** use the "getTime" function. Do not try to answer yourself.
+    - If they ask about a word meaning, **always** use "defineWord" first. If not found, define it yourself.`.trim(),
   travel:
     "You're a cheerful assistant helping users plan trips and give travel advice.",
   support:
@@ -38,13 +42,12 @@ const personas = {
 const tools = [
   {
     functionDeclarations: [
-      // FIX 2: Nest functionDeclarations inside a tools array
       {
         name: "calculate",
         description:
           "Use this function to solve any mathematical calculation or expression requested by the user. It can handle addition, subtraction, multiplication, and division.",
         parameters: {
-          type: "OBJECT", // Use uppercase for types in REST API
+          type: "OBJECT",
           properties: {
             expression: {
               type: "STRING",
@@ -55,15 +58,75 @@ const tools = [
           required: ["expression"],
         },
       },
+      {
+        name: "getTime",
+        description: "Return the current server time in readable format.",
+        parameters: {
+          type: "OBJECT",
+          properties: {}, // No parameters for getTime
+        },
+      },
+      {
+        name: "defineWord",
+        description: "Give the definition of a word in simple English.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            word: {
+              type: "STRING",
+              description: "The word to define.",
+            },
+          },
+          required: ["word"],
+        },
+      },
     ],
   },
 ];
 
 const sessionMemory = {}; // { sessionId: [contents...] }
 
+const routerPrompt = `
+You're a router agent. Given a user message, route to one of:
+- "tutor" for programming
+- "travel" for trip planning
+- "support" for customer service
+
+Reply ONLY with one of: tutor, travel, support.
+`.trim();
+
+async function routePersona(userMessage) {
+  const body = {
+    contents: [{ role: "user", parts: [{ text: userMessage }] }],
+    systemInstruction: {
+      role: "system",
+      parts: [{ text: routerPrompt }],
+    },
+  };
+
+  try {
+    const res = await fetch(GEMINI_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    const routed = data?.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+    return personas[routed] ? routed : "tutor";
+  } catch (err) {
+    console.error("Router error:", err.message);
+    return "tutor";
+  }
+}
+
 // Route to handle chat requests from the client
 app.post("/chat", async (req, res) => {
-  const { message, sessionId = "default", persona = "tutor" } = req.body;
+  const { message, sessionId = "default", persona: inputPersona } = req.body;
+  const persona =
+    inputPersona && personas[inputPersona]
+      ? inputPersona
+      : await routePersona(message);
+
   const systemInstruction = personas[persona] || personas.tutor;
 
   if (!sessionMemory[sessionId]) {
@@ -98,13 +161,13 @@ app.post("/chat", async (req, res) => {
     });
 
     const data = await firstResponse.json();
-    //console.log("Gemini API response:", JSON.stringify(data, null, 2));
+    console.log("Gemini API response:", JSON.stringify(data, null, 2));
     const candidate = data.candidates?.[0];
-    //console.log("Candidate:", JSON.stringify(candidate, null, 2));
+    console.log("Candidate:", JSON.stringify(candidate, null, 2));
     //const toolCall = candidate?.content?.parts?.[0]?.functionCall;
 
     // Check if the model stopped to call a function
-    if (candidate?.finishReason === "TOOL_CALL") {
+    if (candidate?.content?.parts?.[0]?.functionCall) {
       const toolCall = candidate.content.parts[0].functionCall;
       const { name, args } = toolCall;
 
@@ -118,6 +181,17 @@ app.post("/chat", async (req, res) => {
         } catch (err) {
           toolResultContent = "Invalid mathematical expression.";
         }
+      } else if (name === "getTime") {
+        toolResultContent = `The current time is ${new Date().toLocaleString()}`;
+      } else if (name === "defineWord") {
+        // Fake simple dictionary lookup (replace with API later)
+        const defs = {
+          hello: "A greeting or expression of goodwill.",
+          ai: "Artificial Intelligence, machines that simulate human learning.",
+          javascript: "A popular programming language for web development.",
+        };
+        toolResultContent =
+          defs[args.word.toLowerCase()] || "Definition not found.";
       } else {
         toolResultContent = "Tool not found.";
       }
@@ -165,7 +239,7 @@ app.post("/chat", async (req, res) => {
         parts: [{ text: finalReply }],
       });
 
-      return res.json({ reply: finalReply });
+      return res.json({ reply: finalReply, routedTo: persona });
     }
 
     // No tool call, just a normal reply
@@ -175,10 +249,10 @@ app.post("/chat", async (req, res) => {
       parts: [{ text: reply }],
     });
 
-    res.json({ reply });
+    res.json({ reply, routedTo: persona });
   } catch (err) {
     console.error("Error:", err.message);
-    res.status(500).json({ reply: "Server error." });
+    res.status(500).json({ reply: "Server error.", routedTo: persona });
   }
 });
 
