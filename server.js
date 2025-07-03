@@ -34,21 +34,29 @@ const personas = {
     "You're a professional support agent. Answer questions clearly and politely.",
 };
 
+const sessionMemory = {}; // { sessionId: [contents...] }
+
 // Route to handle chat requests from the client
 app.post("/chat", async (req, res) => {
   // Extract user's message from the request body
   const userMessage = req.body.message;
-  const { message, persona = "tutor" } = req.body;
+  const { message, sessionId = "default", persona = "tutor" } = req.body;
   const systemInstruction = personas[persona] || personas.tutor;
+
+  if (!sessionMemory[sessionId]) {
+    // Initialize session memory as an empty array (no system role in contents)
+    sessionMemory[sessionId] = [];
+  }
+
+  // Add the user's message to the session memory
+  sessionMemory[sessionId].push({
+    role: "user",
+    parts: [{ text: userMessage }],
+  });
 
   // Prepare the request body for Gemini API
   const body = {
-    contents: [
-      {
-        role: "user",
-        parts: [{ text: userMessage }],
-      },
-    ],
+    contents: sessionMemory[sessionId],
     systemInstruction: {
       role: "system",
       parts: [{ text: systemInstruction }],
@@ -66,7 +74,7 @@ app.post("/chat", async (req, res) => {
     // If Gemini API returns an error, log and respond with error
     if (!response.ok) {
       const errorText = await response.text();
-      console.error("❌ Gemini API error response:", errorText);
+      console.error("Gemini API error response:", errorText);
       return res.status(500).json({ reply: "Gemini API error." });
     }
 
@@ -78,11 +86,17 @@ app.post("/chat", async (req, res) => {
     const reply =
       data.candidates?.[0]?.content?.parts?.[0]?.text || "No reply.";
 
+    // Add the model's reply to the session memory
+    sessionMemory[sessionId].push({
+      role: "model",
+      parts: [{ text: reply }],
+    });
+
     // Send the reply back to the client
     res.json({ reply });
   } catch (err) {
     // Handle network or server errors
-    console.error("❌ Fetch failed:", err.message);
+    console.error("Fetch failed:", err.message);
     res.status(500).json({ reply: "Server error." });
   }
 });
